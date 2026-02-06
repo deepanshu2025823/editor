@@ -1,15 +1,17 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 export default function BackgroundTracker({ employeeId }: { employeeId: string }) {
   const socketRef = useRef<Socket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
 
   useEffect(() => {
     if (!employeeId) return;
 
+    // 1. Connect to Socket
     const socket = io(window.location.origin, {
       path: '/api/socket',
       transports: ['polling', 'websocket'],
@@ -18,16 +20,19 @@ export default function BackgroundTracker({ employeeId }: { employeeId: string }
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log("🔒 Security Protocol Active");
+      console.log("🔒 Employee Connected to Security Cloud");
       socket.emit('register-employee', employeeId);
     });
 
+    // 2. Handle Admin Request (Start Camera)
     socket.on('request-offer', async () => {
-      console.log("⚡ Establishing Secure Feed...");
+      console.log("⚡ Admin requested feed...");
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         streamRef.current = stream;
+        setIsSharing(true);
 
+        // ✅ FIX: Added TURN Servers (Required for Cloud/Render)
         const peer = new RTCPeerConnection({
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -50,24 +55,28 @@ export default function BackgroundTracker({ employeeId }: { employeeId: string }
         });
         peerRef.current = peer;
 
+        // Add Video Stream
         stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
+        // Send Ice Candidates
         peer.onicecandidate = (event) => {
           if (event.candidate) {
             socket.emit('candidate', { targetId: employeeId, candidate: event.candidate });
           }
         };
 
+        // Create Offer
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
-        
         socket.emit('offer', { targetId: employeeId, offer });
 
       } catch (err) {
-        console.error("Camera Access Denied or Error:", err);
+        console.error("Camera Access Failed:", err);
+        alert("Please Allow Camera Access for Attendance System");
       }
     });
 
+    // 3. Handle Answer
     socket.on('answer', async (answer) => {
       if (peerRef.current && peerRef.current.signalingState !== 'stable') {
         await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
@@ -87,5 +96,14 @@ export default function BackgroundTracker({ employeeId }: { employeeId: string }
     };
   }, [employeeId]);
 
-  return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-50">
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border shadow-lg backdrop-blur-md transition-all ${isSharing ? 'bg-red-500/10 border-red-500/50 text-red-500' : 'bg-slate-900/50 border-slate-700 text-slate-500'}`}>
+            <div className={`w-2 h-2 rounded-full ${isSharing ? 'bg-red-500 animate-pulse' : 'bg-slate-500'}`}></div>
+            <span className="text-[10px] font-bold uppercase tracking-wider">
+                {isSharing ? 'LIVE FEED ACTIVE' : 'SECURITY ACTIVE'}
+            </span>
+        </div>
+    </div>
+  );
 }

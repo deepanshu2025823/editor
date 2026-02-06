@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import BackgroundTracker from '@/components/employee/BackgroundTracker'; 
+import BackgroundTracker from '@/components/employee/BackgroundTracker';
 
 export default function EmployeeLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -19,9 +19,8 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
   if (!employee) return null;
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-[#020617] text-white">
       <BackgroundTracker employeeId={employee.employee_id} />
-      
       <main>{children}</main>
     </div>
   );
