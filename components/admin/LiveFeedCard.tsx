@@ -4,7 +4,6 @@ import { io, Socket } from 'socket.io-client';
 
 export default function LiveFeedCard({ employee }: { employee: any }) {
   const [status, setStatus] = useState<'Offline' | 'Online' | 'Connecting' | 'Live'>('Offline');
-  const [retryCount, setRetryCount] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -14,19 +13,21 @@ export default function LiveFeedCard({ employee }: { employee: any }) {
     // 1. Initialize Socket
     const socket = io(window.location.origin, { 
         path: '/api/socket',
-        transports: ['polling', 'websocket'],
-        reconnectionAttempts: 5,
+        transports: ['polling', 'websocket'], // Fallback needed for firewalls
+        reconnectionAttempts: 10,
         query: { role: 'admin' }
     });
     socketRef.current = socket;
 
     // 2. Check Status on Connect
     socket.on('connect', () => {
+        console.log("Socket connected for surveillance");
         socket.emit('check-status', employee.employee_id);
     });
 
     // 3. Handle Status Changes
     socket.on(`status-${employee.employee_id}`, (isOnline: boolean) => {
+      console.log(`User ${employee.employee_id} is ${isOnline ? 'Online' : 'Offline'}`);
       if (isOnline) {
           if (status === 'Offline') {
               startSurveillance(socket);
@@ -41,8 +42,9 @@ export default function LiveFeedCard({ employee }: { employee: any }) {
     socket.on(`offer-${employee.employee_id}`, async (offer: any) => {
       try {
           if (!peerRef.current) return;
+          console.log("Received Offer");
+          
           if (peerRef.current.signalingState !== 'stable') {
-              // Reset if state is weird
               await Promise.all([
                   peerRef.current.setRemoteDescription(new RTCSessionDescription(offer)),
                   peerRef.current.createAnswer().then(answer => peerRef.current!.setLocalDescription(answer))
@@ -86,22 +88,36 @@ export default function LiveFeedCard({ employee }: { employee: any }) {
     setStatus('Connecting');
     cleanupWebRTC();
 
-    // Enhanced STUN servers for better production connectivity
+    // ✅ FIX: Added OpenRelay TURN servers (Free) to bypass firewalls
     const peer = new RTCPeerConnection({
       iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
+          { urls: 'stun:global.stun.twilio.com:3478' },
+          { 
+            urls: "turn:openrelay.metered.ca:80",
+            username: "openrelayproject",
+            credential: "openrelayproject"
+          },
+          { 
+            urls: "turn:openrelay.metered.ca:443",
+            username: "openrelayproject",
+            credential: "openrelayproject"
+          },
+          { 
+            urls: "turn:openrelay.metered.ca:443?transport=tcp",
+            username: "openrelayproject",
+            credential: "openrelayproject"
+          }
       ]
     });
     peerRef.current = peer;
 
     // Handle incoming video stream
     peer.ontrack = (event) => {
+      console.log("Stream received!");
       if (videoRef.current && event.streams[0]) {
         videoRef.current.srcObject = event.streams[0];
         setStatus('Live');
-        // Clear any pending retry since we are live
         if (retryTimeout.current) clearTimeout(retryTimeout.current);
       }
     };
@@ -116,15 +132,14 @@ export default function LiveFeedCard({ employee }: { employee: any }) {
     console.log(`📡 Requesting feed from ${employee.employee_id}...`);
     socket.emit('admin-join', { targetId: employee.employee_id });
 
-    // Auto-Retry logic if connection stuck on "Connecting"
+    // Auto-Retry logic
     if (retryTimeout.current) clearTimeout(retryTimeout.current);
     retryTimeout.current = setTimeout(() => {
-        setRetryCount(prev => prev + 1);
         if (status !== 'Live') {
             console.log("♻️ Retrying connection...");
             startSurveillance(socket);
         }
-    }, 5000); // Retry every 5 seconds if not live
+    }, 8000); 
   };
 
   return (
